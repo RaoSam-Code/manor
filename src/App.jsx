@@ -86,6 +86,13 @@ const VOICE_PROFILES = {
   margaret: { pitch: 1.05, rate: 0.85 },
 }
 
+const PREFERRED_ENGLISH_VOICES = [
+  'Google US English',
+  'Microsoft David',
+  'Microsoft Zira',
+  'Samantha',
+]
+
 const clampTrust = (value) => Math.max(0, Math.min(100, value))
 
 const formatClock = (seconds) => {
@@ -338,10 +345,13 @@ function App() {
     const utterance = new SpeechSynthesisUtterance(text)
     const profile = VOICE_PROFILES[suspectId] ?? { pitch: 1, rate: 1 }
     const voices = window.speechSynthesis.getVoices()
+    const preferredVoice = PREFERRED_ENGLISH_VOICES.map((name) =>
+      voices.find((voice) => voice.name.includes(name)),
+    ).find(Boolean)
 
     utterance.pitch = profile.pitch
     utterance.rate = profile.rate
-    utterance.voice = voices.find((voice) => /en/i.test(voice.lang)) || null
+    utterance.voice = preferredVoice || voices.find((voice) => /en/i.test(voice.lang)) || null
 
     utterance.onstart = () => setIsSpeaking(true)
     utterance.onend = () => setIsSpeaking(false)
@@ -352,6 +362,7 @@ function App() {
 
   const askGroq = async (suspect, nextUserText) => {
     const apiKey = import.meta.env.VITE_GROQ_API_KEY
+    // No API key means local fallback mode so the game remains playable offline.
     if (!apiKey) {
       return fallbackReply(suspect, nextUserText, interrogationMode, suspectTrust[suspect.id])
     }
@@ -382,7 +393,7 @@ function App() {
         model: 'llama-3.3-70b-versatile',
         messages,
         temperature: 0.8,
-        max_tokens: 300,
+        max_tokens: 500,
       }),
     })
 

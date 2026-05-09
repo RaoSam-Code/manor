@@ -9,7 +9,11 @@ import {
   VolumeX,
 } from 'lucide-react'
 
-const GAME_DURATION_SECONDS = 15 * 60
+const DIFFICULTIES = {
+  easy: { label: 'Easy', durationSeconds: 20 * 60 },
+  normal: { label: 'Normal', durationSeconds: 15 * 60 },
+  hard: { label: 'Hard', durationSeconds: 10 * 60 },
+}
 
 const SUSPECTS = [
   {
@@ -174,7 +178,8 @@ const fallbackReply = (suspect, message, mode, trust) => {
 
 function App() {
   const [gameState, setGameState] = useState('intro')
-  const [timeLeft, setTimeLeft] = useState(GAME_DURATION_SECONDS)
+  const [difficulty, setDifficulty] = useState('normal')
+  const [timeLeft, setTimeLeft] = useState(DIFFICULTIES.normal.durationSeconds)
   const [selectedSuspectId, setSelectedSuspectId] = useState(SUSPECTS[0].id)
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
@@ -188,6 +193,7 @@ function App() {
   const [soundEnabled, setSoundEnabled] = useState(true)
   const [isListening, setIsListening] = useState(false)
   const [isSpeaking, setIsSpeaking] = useState(false)
+  const [voiceError, setVoiceError] = useState('')
   const [selectedEvidence, setSelectedEvidence] = useState('')
   const [resultMessage, setResultMessage] = useState('')
 
@@ -345,9 +351,9 @@ function App() {
     const utterance = new SpeechSynthesisUtterance(text)
     const profile = VOICE_PROFILES[suspectId] ?? { pitch: 1, rate: 1 }
     const voices = window.speechSynthesis.getVoices()
-    const preferredVoice = PREFERRED_ENGLISH_VOICES.map((name) =>
-      voices.find((voice) => voice.name.includes(name)),
-    ).find(Boolean)
+    const preferredVoice = voices.find((voice) =>
+      PREFERRED_ENGLISH_VOICES.some((preferredName) => voice.name.includes(preferredName)),
+    )
 
     utterance.pitch = profile.pitch
     utterance.rate = profile.rate
@@ -362,8 +368,9 @@ function App() {
 
   const askGroq = async (suspect, nextUserText) => {
     const apiKey = import.meta.env.VITE_GROQ_API_KEY
-    // No API key means local fallback mode so the game remains playable offline.
-    if (!apiKey) {
+    const isGroqKey = /^gsk_[A-Za-z0-9._-]+$/.test(apiKey || '')
+    // No valid API key means local fallback mode so the game remains playable offline.
+    if (!isGroqKey) {
       return fallbackReply(suspect, nextUserText, interrogationMode, suspectTrust[suspect.id])
     }
 
@@ -393,7 +400,7 @@ function App() {
         model: 'llama-3.3-70b-versatile',
         messages,
         temperature: 0.8,
-        max_tokens: 500,
+        max_tokens: 1000,
       }),
     })
 
@@ -523,16 +530,33 @@ function App() {
 
   const startVoiceInput = () => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
-    if (!SpeechRecognition || isListening) return
+    if (isListening) return
+
+    if (!SpeechRecognition) {
+      setVoiceError('Voice input is not supported in this browser.')
+      return
+    }
 
     const recognition = new SpeechRecognition()
     recognition.continuous = false
     recognition.interimResults = false
     recognition.lang = 'en-US'
 
-    recognition.onstart = () => setIsListening(true)
+    recognition.onstart = () => {
+      setVoiceError('')
+      setIsListening(true)
+    }
     recognition.onend = () => setIsListening(false)
-    recognition.onerror = () => setIsListening(false)
+    recognition.onerror = (event) => {
+      setIsListening(false)
+      const messageByError = {
+        'no-speech': 'No speech detected. Try speaking a little louder.',
+        'audio-capture': 'No microphone detected. Check your audio input device.',
+        'not-allowed': 'Microphone access denied. Enable microphone permission and try again.',
+        'network': 'Network error during voice input. Check your connection and retry.',
+      }
+      setVoiceError(messageByError[event.error] || 'Voice input failed. Please try again.')
+    }
     recognition.onresult = (event) => {
       const transcript = event?.results?.[0]?.[0]?.transcript || ''
       setInput((previous) => [previous, transcript].filter(Boolean).join(' ').trim())
@@ -557,7 +581,7 @@ function App() {
 
   const resetGame = () => {
     setGameState('intro')
-    setTimeLeft(GAME_DURATION_SECONDS)
+    setTimeLeft(DIFFICULTIES[difficulty].durationSeconds)
     setInput('')
     setLoading(false)
     setInterrogationMode('neutral')
@@ -582,9 +606,25 @@ function App() {
         <h1>Ultimate AI Detective</h1>
         <p>Midnight at Blackwood Manor</p>
         <p>Interrogate suspects, find contradictions, and accuse the killer before time runs out.</p>
+        <div className="difficulty-row">
+          {Object.entries(DIFFICULTIES).map(([key, config]) => (
+            <button
+              key={key}
+              type="button"
+              className={difficulty === key ? 'active' : ''}
+              onClick={() => {
+                setDifficulty(key)
+                setTimeLeft(config.durationSeconds)
+              }}
+            >
+              {config.label}
+            </button>
+          ))}
+        </div>
         <button
           type="button"
           onClick={() => {
+            setTimeLeft(DIFFICULTIES[difficulty].durationSeconds)
             setGameState('playing')
             setResultMessage('')
           }}
@@ -681,6 +721,7 @@ function App() {
             </h2>
             <p>{selectedSuspect.role}</p>
             {isSpeaking && <small>🎙️ Speaking...</small>}
+            {voiceError && <small>{voiceError}</small>}
           </div>
 
           {internalThought && <div className="thought">{internalThought}</div>}
